@@ -102,6 +102,7 @@ def main():
     ap.add_argument("--test", type=Path, required=True)
     ap.add_argument("--limit", type=int, default=0, help="n'evaluer que les N premieres requetes (mesure du temps)")
     ap.add_argument("--vis", type=Path, default=Path("data/vis"))
+    ap.add_argument("--images", action="store_true", help="ecrire une image de reussite et une d'echec (par defaut : aucune image)")
     a = ap.parse_args()
 
     global GSD, CELL
@@ -157,8 +158,8 @@ def main():
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    ok = [i for i, x in enumerate(res) if x["err_top1"] <= 50]
-    ko = [i for i, x in enumerate(res) if x["err_top1"] > 500]
+    ok = [i for i, x in enumerate(res) if x["err_top1"] <= 50] if a.images else []
+    ko = [i for i, x in enumerate(res) if x["err_top1"] > 500] if a.images else []
     pick = [("reussite", max(ok, key=lambda i: res[i]["inliers"]))] if ok else []
     pick += [("echec", ko[0])] if ko else []
     for lab, i in pick:

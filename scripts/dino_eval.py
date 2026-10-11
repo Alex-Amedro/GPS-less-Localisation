@@ -74,10 +74,12 @@ def main():
     ap.add_argument("--test", type=Path, required=True)
     ap.add_argument("--vis", type=Path, default=Path("data/vis"))
     ap.add_argument("--variant", default="", help="variante pour les images (sinon la 1re)")
+    ap.add_argument("--images", action="store_true", help="ecrire une image de reussite et une d'echec (par defaut : aucune image)")
     ap.add_argument("--model", default="dinov2_vits14", help="dinov2_vits14 | dinov2_vitb14 | dinov2_vitl14 | dinov2_vitg14")
     ap.add_argument("--batch", type=int, default=BATCH)
+    ap.add_argument("--ckpt", type=Path, default=None, help="parametres entraines (train_dino.py) a charger par-dessus le modele pre-entraine")
     a = ap.parse_args()
-    short = a.model.replace("dinov2_", "")
+    short = a.model.replace("dinov2_", "") + (("_" + a.ckpt.stem) if a.ckpt else "")
 
     gsd = float(json.load(open(a.test / "meta.json"))["gsd"])
     img = np.load(a.test / "map.npy")
@@ -88,6 +90,9 @@ def main():
     mask = disk_mask(d)
     dev = "cuda"
     model = torch.hub.load("facebookresearch/dinov2", a.model, verbose=False).eval()
+    if a.ckpt:
+        missing = model.load_state_dict(torch.load(a.ckpt), strict=False)
+        print(f"checkpoint {a.ckpt.name} charge : {len(torch.load(a.ckpt))} tenseurs", flush=True)
     model = (model.half() if a.model.endswith("g14") else model).to(dev)  # le geant (1,1 G) ne tient en fp32 qu'avec peu de marge sur 8 Go
     print(f"modele {a.model} : {sum(p.numel() for p in model.parameters()) / 1e6:.0f} M parametres", flush=True)
 
@@ -146,8 +151,8 @@ def main():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     e1 = np.array([x["err1"] for x in res[v]])
-    ok = np.where(e1 <= 100)[0]
-    ko = np.where(e1 > 500)[0]
+    ok = np.where(e1 <= 100)[0] if a.images else np.array([], int)
+    ko = np.where(e1 > 500)[0] if a.images else np.array([], int)
     picks = ([("reussite", int(max(ok, key=lambda i: res[v][i]["sim"])))] if len(ok) else []) + ([("echec", int(ko[0]))] if len(ko) else [])
     a.vis.mkdir(parents=True, exist_ok=True)
     for lab, i in picks:

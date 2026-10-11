@@ -163,6 +163,115 @@ Hasard : 1,2·10⁻⁴ (50 m), 4,9·10⁻⁴ (100 m), 1,2·10⁻² (500 m).
 - Même ordre de taille que sur B : petit → géant double presque le score à 100 m (32 → 49 %).
 - Limites : un seul vol, zone surtout bâtie ; échelle de photo étalonnée sur ce vol ; test non utilisé pour régler quoi que ce soit (variante choisie sur la validation IGN).
 
+**Test C — Val-d'Oise, carte 2018, photos = fenêtres de 2021 (200 photos, bloc 2×2 dalles x 630–640 km, y 6895–6905 km, graine 0, même méthode que B), sans entraînement**
+
+| Méthode | Recall@1 à 50 / 100 / 500 m | Recall@5 (500 m) | Erreur médiane |
+|---|---|---|---|
+| SIFT | 12,5 / 12,5 / 12,5 % (taux de réponse 12,5 %) | 12,5 % | — |
+| DINOv2 base (mean) | 9,5 / 20,5 / 31,5 % | 47,0 % | 2 803 m |
+| DINOv2 large (mean) | 10,5 / 20,0 / 31,0 % | 50,5 % | 2 777 m |
+| DINOv2 géant (mean) | 10,5 / 20,5 / 34,0 % | 61,5 % | 2 572 m |
+
+Grilles 2018 et 2021 identiques ; décalage médian ≈ −0,2 / −0,4 m (max 6,2 m). Ici la taille du modèle n'aide presque pas à 100 m (20 %), seulement pour le top-5.
+
+## Étape 3 — entraînement des dernières couches (en cours, 2026-10-11)
+Décisions de l'utilisateur : on itère vite ; modèle **base** (86 M), 2 derniers blocs ; une 2ᵉ validation rurale ; Val-d'Oise = test C pour l'instant (peut servir à l'entraînement plus tard) ; Belfort 2013 à télécharger ; le GPU (RTX 5070, 8 Go) est sous-utilisé, on peut monter en taille (large) ensuite.
+- **Séparation par zone** (`scripts/prep_train_data.py`) : 43 dalles de Belfort ; test B (4 dalles) + validation ville (`985,6735`) + validation rurale (`980,6745`, graine 2 : montagne entièrement boisée avec un village, très dure : 12 % de Recall@1 à 100 m sans entraînement) + leurs 8 voisines (tampon 5 km) exclues → **21 dalles d'entraînement**, éditions 2020, 2017 (puis 2013), mosaïques 0,8 m/px dans `data/work/train/`.
+- Entraînement (`scripts/train_dino.py`) : paires (disque 305 m d'une édition récente, même endroit dans une édition plus ancienne décalé jusqu'à 64 m) ; perte InfoNCE (τ = 0,05) avec négatifs du lot + un négatif difficile à 320–800 m ; augmentations (rotation ± 10°, échelle ± 5 %, luminosité, contraste, couleur, flou, niveaux de gris, occultation) ; AdamW lr 2·10⁻⁵, cosinus, 100 pas d'échauffement ; bf16 ; choix du point d'arrêt sur la **validation** (moyenne ville + rural).
+
+**Run 1 (2026-10-11) : DINOv2 base, 2 derniers blocs entraînés (14,2 M paramètres sur 87 M), 1 500 pas × 64 paires, éditions 2020 + 2017, 15,8 min, 3,8 Go de GPU, 0,63 s par pas**
+(un bug de marge corrigé en cours de route : les négatifs difficiles sortaient de la dalle ; relance sur les mêmes données).
+- Validation (le point d'arrêt est choisi dessus) : score 0,443 (pas 0) → 0,748 (pas 250) → 0,787 (pas 1500, meilleur). Ville : R@1 à 100 m 63 → 96 % ; montagne boisée : 12 → 54 %. Perte 2,4 → 0,10, validation stable de 1 000 à 1 500 pas : pas de sur-apprentissage visible.
+- **Tests jamais vus (empreinte `mean`, mêmes photos et mêmes disques qu'avant)** :
+
+| Test | Base sans entraînement : R@1 50/100/500 m — R@5(500) — médiane | **Base entraînée : R@1 50/100/500 m — R@5(500) — médiane** |
+|---|---|---|
+| B campagne (Belfort 2017 → 2020, 200 photos) | 8,0 / 20,0 / 33,0 % — 57,5 % — 2 367 m | **38,5 / 76,5 / 84,5 % — 95,5 % — 60 m** |
+| **A vol 03, vraies photos de drone (768 photos)** | 16,8 / 36,3 / 54,3 % — 76,4 % — 254 m | **32,8 / 69,8 / 81,9 % — 95,4 % — 67 m** |
+| C Val-d'Oise (2018 → 2021, 200 photos) | 9,5 / 20,5 / 31,5 % — 47,0 % — 2 803 m | **35,0 / 65,5 / 76,5 % — 91,5 % — 69 m** |
+
+- **Le gain se transfère** : entraîné uniquement sur des orthophotos IGN de Belfort, le modèle double presque ses scores sur les vraies photos de drone (36,3 → 69,8 % à 100 m), sur une carte Google, dans un autre pays, avec un autre capteur ; et sur un autre département (C : 20,5 → 65,5 %).
+  Il dépasse SIFT (36,7 % sur A) et le géant sans entraînement (49,3 % sur A). Écart « fabriqué → réel » : B 76,5 % contre A 69,8 % à 100 m, soit ≈ 7 points.
+- Précautions : 200 photos par test (incertitude ≈ ± 6 points) ; test B proche des données d'entraînement par le couple d'éditions (2017/2020) et le département, séparé par zone avec un tampon de 5 km ; C (autre département et autres éditions) et A (autre pays, autre capteur) confirment que le gain n'est pas propre à B ; le modèle répond toujours (pas d'abstention) : 23–30 % des réponses sont fausses à 100 m ; l'échelle des photos de A est étalonnée sur ce vol.
+- Pas encore fait : 2013 (téléchargé, non préparé), modèle large, plus de pas, hybride SIFT + DINOv2, abstention, filtre de particules.
+
+**Run 2 (arrêté par l'utilisateur) : DINOv2 large (304 M), 4 derniers blocs (50,4 M entraînés), mêmes données IGN que le run 1**
+- 1ʳᵉ tentative : 7,9 Go de GPU sur 8 → débordement vers la mémoire centrale, aucun pas affiché en > 30 min (4 blocs × 192 images par pas de 64 paires : activations > 8 Go) ; corrigé par recalcul des activations (`--ckpt-act`, 3,4 Go de GPU).
+- 2ᵉ tentative : 1,8 s par pas (≈ 45 min pour 1 500 pas) ; validation au pas 250 : score **0,785** (ville R@1 à 100 m 93 %, montagne boisée 56 %), soit le niveau final du petit modèle (0,787 à 1 500 pas ; 0,748 à 250 pas). Arrêté au pas 300 : « trop long et coûteux ».
+- Décision (2026-10-11) : on développe tout le reste avec le petit modèle (base) ; le large sera refait plus tard. Checkpoint partiel supprimé.
+
+**Run 3 (en cours) : DINOv2 base, 2 derniers blocs, entraîné sur de VRAIES photos de drone** — `scripts/calib_uav_gsd.py` (échelle des photos), `scripts/prep_uav_test.py` (mêmes données au format commun), `UavStream` dans `scripts/train_dino.py`.
+- Échelle (m/px) des photos : vol 03 0,115 (mesuré, 4 photos) ; vol 04 0,136 (mesuré sur 9/12 photos, 0,133–0,137, règle « même angle par pixel : 0,115 × hauteur/466 m » = 0,134 → écart 1,5 %) ; vol 01 0,095 mesuré (1 photo) contre 0,100 par la règle ;
+  vol 11 0,195 mesuré (11/12 photos, étendue 0,157–0,212, « hauteur » CSV 2 573 m = au-dessus de la mer) ; vols 02, 06, 08 : SIFT ne trouve rien → règle de la hauteur (0,100 ; 0,207 ; 0,136) ; vols 05 et 10 : autre caméra (3000 × 2000) et hauteur inutilisable → exclus ; vol 07 (30 photos, carte de 50 m) et vol 09 (carte en 4 fichiers) exclus.
+- Séparation : entraînement = vols 01, 02, 06, 08, 11 (≈ 3 900 photos) ; **validation = vol 04** (1 photo sur 4, 185 photos ; voisin du vol 03 mais jamais utilisé pour entraîner, seulement pour choisir le point d'arrêt) ; **test = vol 03**, jamais vu ni pour entraîner ni pour régler.
+- Paires : disque de 305 m nord en haut de la photo (cap Phi1 ± 10°, échelle ± 10 %), disque de la carte Google à la position GPS décalée de ≤ 64 m, négatif difficile à 320–800 m ; mêmes augmentations que pour l'IGN.
+
+**Résultat du run 3 (2026-10-11, 16,1 min, 3,8 Go de GPU, 0,65 s par pas)** : validation vol 04 : score 0,400 (pas 0) → 0,749 (pas 750, point retenu) → 0,732 (pas 1 500, léger recul : début de sur-apprentissage). Perte 2,7 → 0,22.
+Comparaison propre sur les trois tests (empreinte `mean`, base, mêmes photos / disques ; fichiers de résultats distincts par checkpoint) :
+
+| Test | Sans entraînement | Run 1 : IGN seul | **Run 3 : vrais vols seuls** |
+|---|---|---|---|
+| **A, vol 03 réel (768 photos)** | 16,8 / 36,3 / 54,3 % — R@5 76,4 % — 254 m | 32,8 / 69,8 / 81,9 % — 95,4 % — 67 m | **33,7 / 71,4 / 82,6 % — 94,8 % — 65 m** |
+| B campagne Belfort (200) | 8,0 / 20,0 / 33,0 % — 57,5 % — 2 367 m | **38,5 / 76,5 / 84,5 % — 95,5 % — 60 m** | 25,0 / 48,0 / 59,5 % — 80,0 % — 109 m |
+| C Val-d'Oise (200) | 9,5 / 20,5 / 31,5 % — 47,0 % — 2 803 m | **35,0 / 65,5 / 76,5 % — 91,5 % — 69 m** | 24,0 / 44,5 / 53,5 % — 71,0 % — 263 m |
+
+(R@1 à 50 / 100 / 500 m — R@5 à 500 m — erreur médiane.) SIFT sur A : 36,2 / 36,7 / 36,7 %.
+- **Sur le test réel (vol 03), les deux entraînements sont équivalents** (71,4 contre 69,8 % à 100 m : écart de 1,6 point, dans l'incertitude d'environ ± 3 points pour 768 photos).
+- **L'entraînement sur l'IGN généralise mieux** : sur B et C (orthophotos, autres zones) il fait 76,5 et 65,5 % à 100 m contre 48,0 et 44,5 % pour le modèle entraîné sur les vols ; le modèle « vols » est spécialisé sur le style des cartes Google.
+- Sur A, les deux modèles plafonnent à ≈ 70 % à 100 m (82 % à 500 m, 95 % parmi les 5 premières) : l'erreur médiane de 65 m est proche de la limite de la grille (centre d'un disque de 128 m de pas) ; le reste vient probablement d'autres causes (voir run 4, mélange).
+- **Run 4 (en cours)** : mélange 50 % IGN / 50 % vrais vols, mêmes réglages, validation = ville + montagne + vol 04 ; checkpoint choisi sur la moyenne des trois.
+
+**Run 4 (2026-10-11, 17,9 min) : mélange 50 % IGN / 50 % vrais vols, base, 2 derniers blocs** — validation (ville / montagne boisée / vol 04) : score 0,766 au pas 1 500 (stable de 1 000 à 1 500).
+
+| Test | Run 1 (IGN seul) | Run 3 (vols seuls) | **Run 4 (mélange)** |
+|---|---|---|---|
+| **A vol 03 réel** | 32,8 / 69,8 / 81,9 % — R@5 95,4 % — 67 m | 33,7 / 71,4 / 82,6 % — 94,8 % — 65 m | **35,0 / 75,0 / 86,8 % — 97,7 % — 61 m** |
+| B campagne Belfort | 38,5 / 76,5 / 84,5 % — 95,5 % — 60 m | 25,0 / 48,0 / 59,5 % — 80,0 % — 109 m | 34,5 / 70,0 / 82,5 % — 95,0 % — 66 m |
+| C Val-d'Oise | 35,0 / 65,5 / 76,5 % — 91,5 % — 69 m | 24,0 / 44,5 / 53,5 % — 71,0 % — 263 m | 33,5 / 64,0 / 74,5 % — 88,5 % — 68 m |
+
+Le mélange est le meilleur sur le test réel (75,0 contre 69,8 % à 100 m ; écart à la limite de l'incertitude de ± 3 points) et reste à moins de 6,5 points de l'IGN seul sur B et C (incertitude ± 6). **Modèle de travail retenu : `data/work/ckpt_b14_last2_mix_run4.pt`** (choisi sur la validation).
+
+## Étape 4 — contexte et filtre de particules (2026-10-11) — `scripts/particle_filter.py`
+Scénario : GPS coupé à la photo t0 ; le système connaît alors sa dernière position et sa vitesse (3 derniers fixes GPS), puis seulement les photos suivantes. Aucun réentraînement ; descripteurs du modèle de travail (run 4, base, `mean`).
+- Observation : similarité cosinus photo / disques de la carte (grille de 128 m, interpolation bilinéaire), poids ∝ (1 − 0,05)·exp((s − s_max)/T) + 0,05 ; rééchantillonnage systématique si ESS < N/2 ; 5 % de particules réinjectées autour de la meilleure réponse « une image à la fois » ; rayon de recherche r0 + vmax·Δt (150 m + 35 m/s) ; estimation = moyenne autour du mode le plus lourd.
+- **Premier modèle de mouvement (vitesse constante en vecteur) : mauvais** — sur la validation (vol 04) erreur médiane 214–500 m, ≤ 100 m 41–46 %, donc **pire** qu'une image seule (71 m, 70 %) : le drone fait des lignes avec des demi-tours, la vitesse constante en vecteur est fausse à chaque virage.
+- **Modèle retenu : le drone avance dans la direction du cap connu (± 5° de dérive), vitesse scalaire inconnue qui varie lentement.** Vérifié sur le vol 04 (730 paires) : écart cap du déplacement − cap de la photo : médiane − 0,1°, 99 % à moins de 10°, vitesse 14–28 m/s (médiane 22 m/s, pas de temps 5 s).
+  Hypothèse à garder en tête : le cap vient du compas (dans ces données `Phi1` égale la direction du déplacement) et le drone avance vers le haut de la photo.
+- **Réglage sur la VALIDATION uniquement** (vol 04, 738 photos consécutives, 7 coupures × 150 photos), grille σ_s ∈ {0,1 ; 0,3 ; 0,6}, T ∈ {0,03 ; 0,05 ; 0,1} : tous les réglages sont bons (≤ 100 m : 85–95 %, médiane 35–44 m) ; retenu σ_s = 0,6 m/s·√s, T = 0,1 (95,2 % à ≤ 100 m, 97,6 % à ≤ 500 m, médiane 35 m).
+- **Test réel, vol 03, réglage inchangé, une seule exécution** (7 coupures GPS à 3, 100, …, 600 ; 150 photos suivies chacune = 1 050 photos sans GPS) :
+
+| Méthode | Erreur médiane | Moyenne | ≤ 100 m | ≤ 500 m | Dernière photo (médiane) |
+|---|---|---|---|---|---|
+| Une image à la fois (modèle seul) | 60 m | 335 m | 75,6 % | 87,2 % | 50 m |
+| À l'aveugle (cap + vitesse, sans photo) | 1 518 m | 1 984 m | 4,0 % | 23,1 % | 3 663 m |
+| **Filtre de particules** | **57 m** | **83 m** | **87,0 %** | **98,3 %** | 48 m |
+
+- Longue durée (coupure à 3, 100, 300 puis tout le reste du vol, 1 898 photos) : filtre 86,8 % ≤ 100 m, 98,1 % ≤ 500 m, médiane 57 m, dernière photo 51 m ; à l'aveugle : 11 km de médiane, 21 km à la fin → **pas de dérive du filtre**.
+- Coupures de vol (photos manquantes, le filtre ne fait que se déplacer pendant le trou) : 6 manquantes toutes les 20 → 67,2 % ≤ 100 m, 96,1 % ≤ 500 m ; 20 manquantes toutes les 60 → 59,6 % ≤ 100 m, 91,4 % ≤ 500 m (médiane 84 m). La colonne « une image à la fois » n'est pas dégradée dans ces tableaux (elle garde toutes les photos) : comparaison non équitable à ce niveau.
+- Limites : un seul vol réel testé (et un de validation) ; cap supposé connu et fiable (erreur supposée de 5°, non testée au-delà) ; position et vitesse initiales issues du GPS juste avant la coupure ; pas de test de perte totale (position initiale inconnue).
+- Animation : `data/vis/filtre_vol03.mp4` (coupure à la photo 100, jusqu'à la fin du vol) : vraie trajectoire (vert), position estimée (rouge), particules (cyan), réponse « une image » (jaune), estimation à l'aveugle (orange).
+
+**Correction du filtre aux virages (2026-10-11, à la demande de l'utilisateur qui voyait des mouvements « systématiques » dans l'animation)**
+- **Les données sont saines** : numéros source croissants sans trou (768 / 768), heures croissantes, vitesse médiane 13,8 m/s, `Phi1` ≈ direction du déplacement. La photo 119 (`03_0120.JPG`) a des valeurs normales (dt 4 s, pas 94 m, 23,6 m/s, cap stable).
+- **Cause = mon modèle de mouvement, pas les photos** : à 7 endroits du vol 03 (paires 95→96, 191→192, 287→288, 383→384, 479→480, 575→576, 671→672) il y a **un trou de 43–47 s avec un demi-tour de ≈ 150–180° et 240 m de déplacement net (≈ 5 m/s apparent)** ; mon modèle faisait avancer le drone 46 s × 14 m/s en ligne droite (≈ 650 m) → toutes les hypothèses 400–1 000 m trop loin après chaque virage. Même structure sur le vol 04 : 7 trous de 41–45 s, Δcap −180°…+179°.
+- Corrections (chacune validée sur le vol 04, pas sur le test) : cap **moyen** sur l'intervalle ; en virage (trou > 15 s ou cap qui tourne de plus de 25°) : corde de l'arc × facteur de 0,2 à 1 (vitesse utile inconnue), bruit de position 0,1·v·dt, 30 % de particules réinjectées **avant** la pondération autour des 3 meilleures réponses ; en régime normal 5 % après rééchantillonnage.
+  Essai rejeté sur la validation : injection avant pondération partout (94,8 % ≤ 100 m, moyenne 143 m, contre 96,2 % et 114 m).
+- Validation (vol 04) version finale : médiane 35 m, ≤ 100 m 96,2 %, ≤ 500 m 98,6 % (une image seule : 71 m, 70,2 %, 88,1 %).
+- **Test vol 03 : trois évaluations** (le modèle a été modifié après avoir vu ses erreurs de virage sur le test ; chaque changement a été validé sur le vol 04) :
+
+| Version | Médiane | Moyenne | ≤ 100 m | ≤ 500 m | Erreur 1ʳᵉ photo après un virage |
+|---|---|---|---|---|---|
+| v1 : vitesse constante en direction du cap | 57 m | 83 m | 87,0 % | 98,3 % | 280–650 m |
+| v2 : + modèle de virage | 65 m | 83 m | 82,6 % | 99,0 % | 280–650 m |
+| **v3 (finale) : + injection immédiate après virage** | **66 m** | **79 m** | **83,2 %** | **99,5 %** | **28–144 m** (sauf photo 192) |
+| Une image seule (pour mémoire) | 60 m | 335 m | 75,6 % | 87,2 % | — |
+
+  v3 : après coupure puis tout le reste du vol (1 898 photos) : 64 m, 83,5 % ≤ 100 m, 99,5 % ≤ 500 m. Coupures de vol : 6 photos manquantes / 20 → 83 m, 60,5 % ≤ 100 m, 95,6 % ≤ 500 m ; 20 manquantes / 60 → 93 m, 53,4 %, 90,7 %.
+  Erreur médiane 4 photos après chaque trou : 100 m ; ailleurs : 66 m (95ᵉ centile 136 m). Le seul virage encore mauvais : photo 192 (5 737 m) — la réponse photo seule y est elle-même fausse de 5 748 m et le filtre la suit une photo, puis revient (83 m à la suivante).
+  La précision à 100 m de la v1 (87,0 %) est un peu meilleure que celle de la v3 (83,2 %) sur ce test ; la v3 gagne sur la moyenne, le 500 m et surtout les virages.
+- **Photos 117–119 (et 122)** : la ressemblance au vrai endroit y est faible (0,37 à la photo 118 contre 0,6–0,7 d'habitude) car les champs sont **jaunes (riz mûr, octobre 2018) sur la photo et sombres (inondés) sur la carte Google** ; l'IA seule se trompe de 318 à 1 354 m (elle choisit un autre village aux champs bruns). Le filtre les corrige : erreur 31, 27, 13 m aux photos 117, 118, 119 (version finale, coupure à 100). Ce n'est pas un défaut de données.
+- Animation `data/vis/filtre_vol03.mp4` régénérée avec la version finale (coupure à la photo 100, jusqu'à la fin du vol).
+
 ## Nouvelle ville (taille similaire à Belfort) — en cours
 Enquête sur 94 départements (édition RVB 20 cm la plus proche de 2020 ; relevé partiel du catalogue, script supprimé). Taille de téléchargement mesurée :
 Paris D075 1,23 Go · Hauts-de-Seine D092 1,79 · Seine-Saint-Denis D093 1,89 · Val-de-Marne D094 2,17 · **Belfort D090 4,07** · **Val-d'Oise D095 7,42** · Essonne D091 9,39 · Yvelines D078 13,1 ;

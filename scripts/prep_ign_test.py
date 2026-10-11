@@ -8,6 +8,7 @@ Les dalles extraites sont supprimees a la fin.
 Sortie dans --out : map.npy (carte ancienne, RGB uint8), queries/NNN.png, truth.csv (x_m, y_m en metres depuis le coin haut-gauche), meta.json.
 """
 import argparse
+import contextlib
 import csv
 import json
 import random
@@ -17,6 +18,7 @@ import time
 from pathlib import Path
 
 import cv2
+import multivolumefile
 import numpy as np
 import py7zr
 import rasterio
@@ -28,8 +30,22 @@ TMP = Path(r"C:\t")  # chemin court : les noms internes des archives depassent s
 NAME = re.compile(r"-(\d{4})-(\d{4})-LA93")
 
 
+@contextlib.contextmanager
+def open7z(path):
+    """Ouvre une archive .7z, ou un jeu de volumes .7z.001/.002/... (donner le chemin du .7z)."""
+    path = Path(path)
+    if path.suffix == ".001":
+        path = path.with_suffix("")
+    if path.exists():
+        with py7zr.SevenZipFile(path) as z:
+            yield z
+    else:
+        with multivolumefile.open(path, "rb") as mv, py7zr.SevenZipFile(mv) as z:
+            yield z
+
+
 def list_dalles(archive):
-    with py7zr.SevenZipFile(archive) as z:
+    with open7z(archive) as z:
         return {tuple(int(g) for g in NAME.search(f.filename).groups()): f.filename for f in z.list() if f.filename.lower().endswith(".jp2")}
 
 
@@ -37,7 +53,7 @@ def extract(archive, names, tag):
     out = TMP / tag
     shutil.rmtree(out, ignore_errors=True)
     out.mkdir(parents=True)
-    with py7zr.SevenZipFile(archive) as z:
+    with open7z(archive) as z:
         z.extract(path=out, targets=list(names.values()))
     return {k: next(out.rglob(Path(v).name)) for k, v in names.items()}
 

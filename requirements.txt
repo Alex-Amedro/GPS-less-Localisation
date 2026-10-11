@@ -8,3 +8,4 @@ opencv-python
 pyproj
 py7zr
 tqdm
+tensorboard
