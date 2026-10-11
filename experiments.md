@@ -272,6 +272,143 @@ Scénario : GPS coupé à la photo t0 ; le système connaît alors sa dernière 
 - **Photos 117–119 (et 122)** : la ressemblance au vrai endroit y est faible (0,37 à la photo 118 contre 0,6–0,7 d'habitude) car les champs sont **jaunes (riz mûr, octobre 2018) sur la photo et sombres (inondés) sur la carte Google** ; l'IA seule se trompe de 318 à 1 354 m (elle choisit un autre village aux champs bruns). Le filtre les corrige : erreur 31, 27, 13 m aux photos 117, 118, 119 (version finale, coupure à 100). Ce n'est pas un défaut de données.
 - Animation `data/vis/filtre_vol03.mp4` régénérée avec la version finale (coupure à la photo 100, jusqu'à la fin du vol).
 
+**Photos 465–476 du vol 03 : erreur du filtre de 1,9 km aux photos 473–474 (signalée par l'utilisateur, 2026-10-11)**
+- Données de vol normales sur cette portion (pas de 94–96 m, 11,7–13,7 m/s, Δcap ≤ 1,8°). La photo 473 : 1 866 m d'erreur du filtre (coupure à 3 ou 100), la réponse photo seule se trompe de 1 251 à 2 189 m sur 8 des 12 photos 465–476.
+- **Cause : désaccord d'apparence photo / carte** — photos jaune pâle (riz mûr, oct. 2018) contre carte très sombre (champs inondés) : l'IA ne reconnaît plus l'endroit, ses meilleures réponses sont **dispersées** (décalages (966, −795), (−1 647, −480), (1 500, −422), (1 138, 1 870), (1 417, 1 219), (1 184, 1 460)… m) et la vraie position n'apparaît souvent qu'en 2ᵉ ou 3ᵉ proposition (27 à 96 m). À 473 puis 474 deux réponses fausses voisines (≈ 1,8 km, 310 m d'écart) s'accordent : 100 particules injectées s'ajoutent, la vraie grappe a été amincie par des vraisemblances faibles (0,42–0,57 contre 0,6–0,7 ailleurs) et le mode bascule. Le filtre revient à 59–69 m dès la photo 475.
+- Essai « ambiguïté » (écart de ressemblance entre la meilleure et la 2ᵉ réponse > 305 m ; α = clip(écart/0,05 ; 0,15 ; 1) réduit la vraisemblance et/ou le nombre de particules injectées). Résultats (médiane | moyenne | ≤ 100 m | ≤ 500 m | > 1 km), 7 coupures × 150 photos :
+
+| Variante | Validation vol 04 | **Test vol 03** |
+|---|---|---|
+| Sans ambiguïté (retenue) | 35 m \| 114 m \| 96,2 % \| 98,6 % \| 1,4 % | **66 m \| 79 m \| 83,2 % \| 99,5 % \| 0,5 %** |
+| Pondération + injection réduites | 36 m \| 95 m \| 95,4 % \| 98,9 % \| 1,1 % | 72 m \| 105 m \| 74,2 % \| 98,3 % \| 1,5 % |
+| Injection seule réduite | 35 m \| 93 m \| 96,1 % \| 98,9 % \| 1,1 % | 68 m \| 86 m \| 80,2 % \| 99,0 % \| 1,0 % |
+
+  Les variantes suppriment bien le saut des photos 473–474 mais **ne sont pas meilleures sur l'ensemble** (neutres à légèrement meilleures sur la validation, moins bonnes sur le test) : **non retenues** (règle du projet : une brique n'est gardée que si elle améliore mesurablement). Défaut par défaut : `ambig=False` (option `--ambig`).
+  Ces portions sont précisément ce que le « je ne sais pas » doit signaler. Le test vol 03 a maintenant été regardé 5 fois (v1, v2, v3, deux variantes d'ambiguïté).
+- Vidéos conservées pour comparaison dans le README : `data/vis/filtre_vol03_v3_virages_sans_ambiguite.mp4` (version retenue), `data/vis/filtre_vol03_v4_ambiguite_ajout.mp4` (variante à injection réduite). La toute première vidéo (vitesse constante en direction du cap, sans modèle de virage) a été écrasée avant cette règle de conservation et n'est pas reproductible.
+
+## Étape 5 — « je ne sais pas » (2026-10-11) — `scripts/confidence.py`
+Ordre de travail demandé par l'utilisateur : 1) « je ne sais pas », 3) hybride SIFT + filtre, 2) robustesse. Aucun commit git (consigne).
+- **Signaux sans vérité terrain** enregistrés à chaque photo (`particle_filter.FEAT_NAMES` : étalement du mode, part du poids dans le mode, ESS, ressemblance à la position estimée, accord avec les réponses photo, écart entre les 2 meilleures réponses…).
+  « Bonne » réponse = erreur du filtre ≤ 100 m. Données : validation vol 04 (2 384 photos suivies, 95,3 % de bonnes), test vol 03 (2 524 photos suivies, 80,5 % de bonnes ; vol plus difficile), coupures tous les 40 photos, 150 photos suivies.
+- **AUROC test (validation)** : part du poids dans le mode **0,846 (0,928)** ; ressemblance à la position estimée 0,744 (0,639) ; écart estimé / 3 réponses 0,761 (0,677) ; étalement 0,756 (0,600) ; ESS 0,558 (0,553) ; virage 0,445 (0,598).
+- **Confiance combinée** (régression logistique L2 apprise sur la validation) : AUROC validation 0,938 mais **test 0,814** — moins bonne que le meilleur signal seul, et **mal calibrée sur un autre vol** (confiance annoncée 0,99 contre 0,91 observée ; 0,79 contre 0,61 ; 0,91 contre 0,59) parce que le vol 03 est plus difficile que le 04. Non retenue.
+- **Score retenu : « part du poids dans le mode »** (le seul que la validation classe en tête, sans regarder le test). Test, vol jamais vu :
+
+| Couverture (part des photos où on répond) | ≤ 100 m | ≤ 500 m | Erreur médiane | Moyenne | Erreurs > 1 km gardées |
+|---|---|---|---|---|---|
+| 100 % (sans abstention) | 80,5 % | 99,2 % | 67 m | 88 m | 19 sur 19 |
+| 95 % | 82,5 % | 100,0 % | 66 m | 73 m | **0** |
+| 90 % | 85,4 % | 100,0 % | 64 m | 70 m | 0 |
+| 80 % | 88,9 % | 100,0 % | 62 m | 66 m | 0 |
+| 70 % | 91,8 % | 100,0 % | 59 m | 63 m | 0 |
+| 50 % | 96,4 % | 100,0 % | 53 m | 57 m | 0 |
+
+- **Seuil fixé sur la validation** (confiance ≥ 0,84 = on s'abstient sur les 10 % de photos les moins sûres de la validation) appliqué tel quel au test : validation → répond à 90,0 %, 98,6 % de bonnes (contre 95,3 %), 0 % de > 1 km (contre 1,1 %) ;
+  **test → répond à 76,0 %** (davantage d'abstentions sur le vol plus difficile, ce qui est le bon comportement), **90,4 % de bonnes (contre 80,5 %), 0 % de > 1 km (contre 0,8 %)**, erreur médiane 61 m (contre 67 m).
+- Photos 465–476 du vol 03 : toutes en « je ne sais pas » sauf la 465 ; la photo 473 (erreur 1 864 m) a une confiance de 0,26. Le système signale donc cette portion comme douteuse, y compris des photos où le filtre avait en fait raison (45–106 m) : abstention prudente.
+- Pour comparaison : la réponse photo seule est bonne à 74,3 % (≤ 100 m) et son écart reponse1 − reponse2 a un AUROC de 0,827 (test).
+- Limites : une seule paire validation / test ; la calibration absolue (probabilité annoncée) ne se transfère pas d'un vol à l'autre ; on ne l'utilise que comme classement + seuil ; l'abstention coûte de la couverture (en vol réel, ne pas répondre peut vouloir dire continuer à l'aveugle un moment).
+- Vidéo : `data/vis/filtre_vol03_v5_je_ne_sais_pas.mp4` (même scénario que v3 ; la marque rouge devient un cercle gris « JE NE SAIS PAS » sous le seuil 0,84).
+
+## Brique 3 — hybride SIFT + filtre (2026-10-11)
+SIFT (`sift_eval.py`, recherche globale photo par photo, filtre cap ± 20° et échelle × 1,5) n'a jamais de fausse réponse quand il répond : validation vol 04 : répond à 64,0 % des photos, erreur médiane 32 m, 0,4 % à plus de 100 m, 0 % à plus de 500 m ;
+test vol 03 : répond à 36,7 %, médiane 19 m, 0 % à plus de 100 m (0,06 s par photo).
+- Intégration (paramètres fixés a priori, **aucun réglage**) : quand SIFT répond, 10 % des particules sont replacées autour de sa position (± 15 m) avant la pondération, puis pondération gaussienne σ = 30 m avec 2 % d'incertitude (cas rare où SIFT se tromperait).
+- Résultats (médiane | moyenne | ≤ 100 m | ≤ 500 m | dernière photo) :
+
+| Vol | Scénario | Photo + cap (filtre seul) | **Hybride photo + cap + SIFT** |
+|---|---|---|---|
+| Validation 04 | 7 coupures × 150 | 35 m \| 114 m \| 96,2 % \| 98,6 % \| 47 m | **29 m \| 105 m \| 96,8 % \| 98,6 % \| 34 m** |
+| Validation 04 | reste du vol | 37 m \| 106 m \| 95,1 % \| 98,6 % \| 86 m | **30 m \| 85 m \| 96,6 % \| 98,8 % \| 80 m** |
+| **Test 03** | 7 coupures × 150 | 66 m \| 79 m \| 83,2 % \| 99,5 % \| 57 m | **34 m \| 48 m \| 90,8 % \| 99,8 % \| 39 m** |
+| **Test 03** | reste du vol | 64 m \| 84 m \| 83,5 % \| 99,5 % \| 59 m | **33 m \| 53 m \| 89,4 % \| 99,6 % \| 32 m** |
+
+  → **retenu** (améliore mesurablement sur les deux vols) ; l'erreur médiane du test est divisée par 2.
+- « Je ne sais pas » avec l'hybride (mêmes règles, seuil fixé sur la validation) : AUROC test du score « part du poids dans le mode » **0,915** (0,846 sans SIFT) ; à 95 % de couverture : 90,7 % ≤ 100 m, 0 erreur > 1 km ; à 80 % : 96,7 % ≤ 100 m, médiane 29 m ; à 50 % : 99,7 % ≤ 100 m.
+  Seuil appliqué tel quel au test : répond à 78,8 % des photos, **97,1 % de bonnes (contre 88,0 %), 0 % > 1 km (contre 0,4 %), médiane 29 m (contre 35 m)**. Confiance combinée logistique : AUROC test 0,827 (inférieure au score simple, non retenue).
+- Vidéo : `data/vis/filtre_vol03_v6_hybride_sift.mp4` (coupure à la photo 100) ; sur ce scénario : médiane 41 m, ≤ 100 m 90,0 %, ≤ 500 m 100 % (contre 59 m, 86,0 %, 100 % pour la v3).
+
+## Brique 2 — robustesse (2026-10-11) — `scripts/robustness.py`
+Modèle inchangé (run 4, aucun réentraînement). Une perturbation à la fois, 7 coupures GPS × 150 photos, même méthode que le reste. Colonnes : médiane / ≤ 100 m / ≤ 500 m / > 1 km ; entre parenthèses l'hybride avec SIFT quand il peut être évalué
+(SIFT n'est pas recalculé pour le zoom et l'inclinaison ; pour un biais de cap ≥ 20° SIFT rejette tout par sa propre vérification ± 20°, donc hybride = filtre seul).
+Cap erroné utilisé partout (remise nord en haut ET direction du mouvement) ; inclinaison = homographie d'une caméra de champ 60° (supposé) penchée dans une direction aléatoire à chaque photo ; zoom = la zone vue est × f plus large.
+
+| Perturbation | **Test vol 03** | Validation vol 04 |
+|---|---|---|
+| Aucune (référence) | 66 m / 83,2 % / 99,5 % / 0,5 % (hybride 34 m / 90,8 %) | 35 m / 96,2 % / 98,6 % / 1,4 % (hybride 29 m / 96,8 %) |
+| Biais de cap 5° | 61 m / 74,1 % / 98,7 % / 1,0 % (hybride 84,1 %) | 55 m / 88,9 % / 98,7 % (hybride 94,1 %) |
+| Biais de cap 10° | 80 m / 64,9 % / 95,5 % / 2,9 % (hybride 78,8 %) | 81 m / 71,4 % / 95,7 % (hybride 90,5 %) |
+| **Biais de cap 20°** | 125 m / 30,1 % / 85,6 % / 10,2 % | 118 m / 35,8 % / 90,5 % / 8,2 % |
+| Biais de cap 30° | 183 m / 15,9 % / 70,1 % / 22,2 % | 163 m / 20,3 % / 82,1 % / 13,9 % |
+| Biais de cap 45° | 709 m / 8,1 % / 44,4 % / 43,9 % | 329 m / 9,9 % / 56,7 % / 31,7 % |
+| Bruit de cap 5° (écart-type) | 64 m / 81,4 % / 99,1 % (hybride 90,1 %) | 40 m / 95,3 % / 98,7 % (hybride 97,3 %) |
+| Bruit de cap 10° | 61 m / 82,6 % / 98,0 % (hybride 91,2 %) | 42 m / 92,3 % / 97,4 % (hybride 94,9 %) |
+| Bruit de cap 20° | 54 m / 80,5 % / 90,2 % / 8,8 % (hybride 83,7 %) | 55 m / 80,0 % / 91,2 % / 8,3 % (hybride 85,6 %) |
+| Zone vue × 0,8 / 0,9 / 1,1 | 64 / 64 / 67 m ; 84,4 / 83,9 / 81,5 % | 34 / 34 / 36 m ; 95,7 / 96,3 / 95,7 % |
+| Zone vue × 1,25 | 73 m / 77,0 % / 98,6 % | 40 m / 95,9 % / 99,8 % |
+| Zone vue × 1,5 | 76 m / 68,7 % / 96,6 % / 3,2 % | 47 m / 93,0 % / 99,3 % |
+| Inclinaison 5° / 10° | 70 m / 80,4 % ; 80 m / 67,5 % / 98,2 % | 40 m / 95,6 % ; 55 m / 90,2 % / 98,6 % |
+| **Inclinaison 20°** | 112 m / 42,4 % / 93,7 % / 3,7 % | 93 m / 55,9 % / 98,8 % / 1,1 % |
+| Inclinaison 30° | 305 m / 13,4 % / 57,7 % / 30,9 % | 177 m / 20,7 % / 88,8 % / 10,3 % |
+| Vitesse initiale × 0,5 / 0,75 / 1,25 / 1,5 | 83,2 ± 4 % : 80,3 / 84,1 / 82,7 / 79,5 % ; ≤ 500 m ≥ 99,2 % | 94,0 / 96,4 / 95,6 / 92,0 % ; ≤ 500 m ≥ 98,6 % |
+| Dernière position GPS fausse de 100 / 300 m | 82,9 / 80,0 % ; ≤ 500 m ≥ 99,1 % | 95,5 / 93,8 % ; ≤ 500 m 98,6–98,7 % |
+| Dernière position GPS fausse de 1 000 m | 67 m / 79,6 % / 96,9 % / 2,0 % (hybride 86,8 %) | 37 m / 91,0 % / 93,7 % / 4,3 % (hybride 93,2 %) |
+
+- **Les deux vraies faiblesses : l'erreur de cap (≥ 20°) et l'inclinaison de la caméra (≥ 20°).** À 10° de biais de cap la précision à 100 m tombe d'environ 18 points (filtre seul) mais reste exploitable avec SIFT ; à 20° elle s'effondre (30–36 %) et 8–10 % des réponses dépassent 1 km.
+  Le modèle n'est pas invariant à la rotation (il a besoin du cap) et n'a jamais vu de perspective à l'entraînement.
+- Le bruit de cap non biaisé (jusqu'à 10°) est bien toléré ; à 20° il apparaît une queue d'erreurs (8–9 % > 1 km).
+- Le zoom (altitude mal estimée jusqu'à × 1,5) coûte peu : 68,7 % contre 83,2 % à × 1,5 sur le test, quasi rien sur la validation ; le reste est compensé par le filtre.
+- La vitesse initiale (× 0,5 à × 1,5) et la position GPS initiale (jusqu'à 300 m) sont sans effet notable ; un décalage de 1 km est rattrapé (≥ 96 % ≤ 500 m sur le test).
+- **Pistes d'amélioration (non faites)** : (a) augmentations de perspective et de rotation (± 15°) à l'entraînement ; (b) estimer le biais du cap en ligne à partir de la rotation trouvée par SIFT quand il répond (le cap estimé par SIFT est vérifié à 2–8° près sur le vol 03) ; (c) plus de pas de cap dans le filtre (σ_cap).
+- Limites : une perturbation à la fois, constante sur tout le vol ; inclinaison simulée par homographie sur des photos déjà quasi verticales (le vol 03 a ≤ 5° de roulis et tangage) ; champ de vue supposé 60°.
+
+## Nettoyage disque et « grosse faute » du filtre : sauts aléatoires aux virages (2026-10-11)
+- **Disque** (demande de l'utilisateur : « le projet fait presque 100 Go ») : mesuré 69 Go (projet 59 Go dont archives 48,5 Go, données de travail 10,4 Go, .venv 4,6 Go ; cache des poids 5,8 Go). Supprimés : archives IGN Belfort 2013 et 2017 (8,2 Go), Val-d'Oise 2018 et 2021 (14,9 Go), poids DINOv2 petit, large et géant (5,9 Go) → **28,9 Go libérés** ; conservés : Belfort 2020, UAV-VisLoc complet (22,3 Go), VPAIR (0,9 Go), poids DINOv2 base, les 3 checkpoints (54 Mo chacun).
+- **Les « sauts » vus dans la vidéo v4 étaient réels et ALÉATOIRES.** Mon test à une seule graine avait caché le problème : avec 20 graines (coupure à la photo 100, tout le reste du vol), la version retenue v3 fait un saut > 1 km aux photos 190–200 dans **9 tirages sur 20** (v4 : 7 sur 20, v6 hybride : 0 sur 20 mais 18 sur 20 avec une erreur > 1 km ailleurs), pire erreur 5 741 m ;
+  la vidéo génère une trajectoire différente de mon test car elle enregistre 300 particules (suite de tirages différente). Cause : à la photo 192 (après un trou de 46 s) la réponse photo seule est fausse de 5 748 m, elle reçoit 30 % de particules réinjectées avant la pondération et gagne un tirage sur deux.
+- **Correction (contrainte physique, aucun réentraînement)** : une réponse photo ou SIFT plus éloignée de la dernière position estimée que `vmax × dt + 3 × étalement + 100 m` (vmax = 35 m/s) est impossible et n'est pas réinjectée. Résultats moyennés sur **10 tirages**, 7 coupures × 150 photos (médiane | moyenne | ≤ 100 m | ≤ 500 m | > 1 km) :
+
+| | Validation vol 04 | **Test vol 03** |
+|---|---|---|
+| Filtre sans contrainte (v3) | 35 m \| 106 m \| 96,2 % ± 0,2 \| 98,7 % \| 1,29 % | 65 m \| 79 m \| 83,4 % ± 0,6 \| 99,5 % \| 0,47 % |
+| **Filtre avec contrainte** | 34 m \| 42 m \| 97,0 % ± 0,1 \| 100,0 % \| **0,00 %** | 55 m \| 61 m \| 89,8 % ± 0,3 \| 100,0 % \| **0,00 %** |
+| Hybride SIFT sans contrainte | 29 m \| 91 m \| 97,1 % ± 0,2 \| 98,8 % \| 1,16 % | 34 m \| 51 m \| 90,3 % ± 0,3 \| 99,7 % \| 0,31 % |
+| **Hybride SIFT avec contrainte (version finale)** | 29 m \| 37 m \| 97,6 % ± 0,1 \| 100,0 % \| **0,00 %** | **32 m \| 42 m \| 94,4 % ± 0,2 \| 100,0 % \| 0,00 %** |
+
+- **« Retours en arrière »** (avancement estimé le long du cap < − 30 m entre deux photos, hors trous) : 2 sur 660 pour la v3 (photos 473 et 577), 5 pour l'hybride sans contrainte ; avancement médian 93–94 m contre 94 m vrai. Ils venaient des mêmes sauts ponctuels ; non retravaillés à part.
+- Défaut de la contrainte : elle empêche de « rattraper » une position de départ très fausse (voir robustesse) ; un assouplissement quand la confiance reste basse longtemps est une piste.
+- **« Je ne sais pas » avec la version finale** (`confidence.py --sift`, seuil 0,97 fixé sur la validation = on s'abstient sur les 10 % de photos les moins sûres) : AUROC test du score « part du poids dans le mode » 0,891 ; test : répond à 77,3 % des photos, **98,1 % de bonnes (contre 92,7 %)**, médiane 28 m (contre 33 m), 0 erreur > 500 m ; combinée logistique : AUROC test 0,723 (non retenue).
+- Photos 465–476 avec la version finale : erreurs du filtre 32–105 m (plus aucun saut) ; le système dit « je ne sais pas » à 10 photos sur 12.
+- Vidéos : `filtre_vol03_v7_contrainte_physique.mp4` (filtre + contrainte ; médiane 50 m, 92,0 % ≤ 100 m sur ce tirage), `filtre_vol03_v8_final_hybride_je_ne_sais_pas.mp4` (hybride + contrainte + abstention à 0,97 ; médiane 39 m, 94,0 % ≤ 100 m). GIF dans `docs/` pour le README : avant (v4, saut au virage), après (v7), final (v8).
+
+**Robustesse refaite avec la version finale (test vol 03, 7 coupures × 150, un tirage) :** référence 56 m / 89,8 % ≤ 100 m (hybride 32 m / 94,0 %) ;
+biais de cap 5° : 84,0 % (hybride 90,3 %) ; 10° : 72,6 % (85,4 %) ; **20° : 41,0 %, 12,4 % > 1 km** ; 30° : 16,3 % ; 45° : 4,0 %, 71 % > 1 km ;
+bruit de cap 5° / 10° / 20° : 89,0 / 88,9 / 88,5 % (insensible) ; zone vue × 1,25 : 87,0 % ; × 1,5 : 78,5 % ; inclinaison 10° : 76,5 % ; **20° : 50,6 %** ; 30° : 15,5 % ;
+vitesse initiale × 0,5…1,5 : 86,8–90,2 % ; dernière position GPS fausse de 100 / 300 m : 89,9 / 87,8 % ; **de 1 000 m : 67,9 %, 16,5 % > 1 km** (hybride 81,2 %, 6,0 %) — pire qu'avant la contrainte (le filtre ne peut plus sauter loin).
+
+**Correction de la contrainte physique (même soirée) : trop confiante dans une estimation non confirmée.**
+Le test « 20 photos manquantes sur 60 » a révélé un défaut : après un trou, l'estimation a dérivé à l'aveugle (≈ 1,2 km) puis la contrainte comparait les réponses photo à CETTE estimation fausse et rejetait les bonnes réponses (« impossibles ») ; l'erreur restait > 1 km pendant ≈ 40 photos.
+Deux corrections de principe : (1) le temps de la contrainte est le temps depuis la dernière **observation utilisée**, pas depuis la dernière photo ; (2) une dérive à l'aveugle `0,15 × vmax × (temps depuis la dernière confirmation)` s'ajoute tant que l'estimation n'a pas été **confirmée** par la photo (accord à moins de 250 m) ou par SIFT (à moins de 100 m).
+Résultats (photo + cap, moyenne de 6 tirages ; médiane | moyenne | ≤ 100 m | ≤ 500 m | > 1 km) :
+
+| Scénario | Sans contrainte | Contrainte v1 (dérive nulle) | **Contrainte avec confirmation (finale)** |
+|---|---|---|---|
+| Test, aucun trou | 65 m \| 79 m \| 83,2 % \| 99,5 % \| 0,48 % | 55 m \| 61 m \| 89,8 % \| 100 % \| 0 % | **56 m \| 62 m \| 89,7 % \| 100 % \| 0 %** |
+| Test, 6 manquantes / 20 | 82 m \| 139 m \| 61,6 % \| 96,2 % \| 1,87 % | 70 m \| 104 m \| 68,8 % \| 98,2 % \| 0,19 % | 70 m \| 106 m \| 68,4 % \| 98,3 % \| 0,49 % |
+| Test, **20 manquantes / 60** | 89 m \| 172 m \| 54,9 % \| 92,5 % \| 2,19 % | 89 m \| 291 m \| 55,1 % \| **83,9 %** \| **7,27 %** | **80 m \| 151 m \| 60,5 % \| 93,8 % \| 1,11 %** |
+| Test, GPS fausse de 1 000 m | 69 m \| 128 m \| 78,2 % \| 94,3 % \| 3,46 % | 290 m \| 675 m \| 55,5 % \| 63,6 % \| 27,3 % | **62 m \| 155 m \| 80,4 % \| 90,8 % \| 5,68 %** |
+| Validation, aucun trou | 34 m \| 105 m \| 96,2 % \| 98,7 % \| 1,27 % | 34 m \| 42 m \| 97,0 % \| 100 % \| 0 % | 34 m \| 42 m \| 96,9 % \| 100 % \| 0 % |
+| Validation, 20 manquantes / 60 | 44 m \| 119 m \| 84,1 % \| 96,5 % \| 1,00 % | 44 m \| 83 m \| 83,2 % \| 96,3 % \| 0 % | 44 m \| 74 m \| 84,6 % \| 97,4 % \| 0,02 % |
+| Validation, GPS fausse de 1 000 m | 38 m \| 151 m \| 91,4 % \| 94,3 % \| 3,31 % | 47 m \| 319 m \| 71,3 % \| 75,5 % \| 15,2 % | 39 m \| 143 m \| 86,1 % \| 89,9 % \| 5,46 % |
+
+→ la version finale est **meilleure ou égale à « sans contrainte » partout** sauf sur la précision à 100 m après une position de départ fausse de 1 km sur la validation (86,1 % contre 91,4 %).
+Hybride SIFT final (6 tirages) : test aucun trou 32 m / 94,4 % ≤ 100 m / 100 % ≤ 500 m ; 6 manquantes / 20 : 76,4 % ; 20 / 60 : 61,0 % (≤ 500 m 85,7 % avant la correction de confirmation).
+**Robustesse finale (test vol 03, 7 coupures × 150, un tirage)** : référence 55 m / 89,7 % (hybride 32 m / 94,4 %) ; biais de cap 5° : 83,0 % (hybride 89,1 %) ; 10° : 75,3 % (84,8 %) ; 20° : 45,1 %, 1,9 % > 1 km ; 30° : 22,5 %, 16,7 % > 1 km ; 45° : 8,8 %, 39,7 % > 1 km ;
+bruit de cap 5° / 10° / 20° : 90,0 / 89,5 / 86,4 % (1,4 % > 1 km à 20°) ; zone vue × 0,8 … × 1,25 : 87,0–90,4 % ; × 1,5 : 77,6 % ; inclinaison 5° / 10° / 20° / 30° : 87,6 / 76,9 / 50,6 / 17,0 % ; vitesse × 0,5 … × 1,5 : 86,9–89,7 % ;
+GPS fausse de 100 / 300 / 1 000 m : 89,5 / 88,2 / 80,2 % (hybride 94,5 / 93,4 / 86,7 %). « Je ne sais pas » avec la version finale : répond à 78,1 % des photos du test, **97,9 % de bonnes** (contre 92,6 %), médiane 28 m (contre 33 m), AUROC 0,891.
+Vidéos `v7` et `v8` régénérées avec ce code (v7 : 51 m, 88,7 % ≤ 100 m ; v8 : 39 m, 94,0 % ≤ 100 m sur le tirage de la vidéo) ; GIF du README reconstruits à partir de v4 (avant), v7 (après), v8 (final).
+
 ## Nouvelle ville (taille similaire à Belfort) — en cours
 Enquête sur 94 départements (édition RVB 20 cm la plus proche de 2020 ; relevé partiel du catalogue, script supprimé). Taille de téléchargement mesurée :
 Paris D075 1,23 Go · Hauts-de-Seine D092 1,79 · Seine-Saint-Denis D093 1,89 · Val-de-Marne D094 2,17 · **Belfort D090 4,07** · **Val-d'Oise D095 7,42** · Essonne D091 9,39 · Yvelines D078 13,1 ;
