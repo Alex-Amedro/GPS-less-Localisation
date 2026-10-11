@@ -1,0 +1,10 @@
+# Installer torch en premier, avec l'index CUDA 12.8 (GPU Blackwell RTX 5070) :
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# Puis : pip install -r requirements.txt
+numpy
+matplotlib
+rasterio
+opencv-python
+pyproj
+py7zr
+tqdm
