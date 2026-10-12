@@ -110,7 +110,7 @@ def mode_estimate(pos, w, radius=150.0, ncand=64):
 
 
 # sigma_s et temp ont ete choisis sur la validation (vol 04), jamais sur le test
-DEFAULTS = dict(n=2000, sigma0=15.0, sigma_s0=2.0, sigma_s=0.6, sigma_cap=5.0, temp=0.1, p_out=0.05, vmax=35.0, drift_frac=0.15, r0=150.0, inject=0.05, inject_turn=0.3, jit_pos=4.0, jit_speed=0.2,
+DEFAULTS = dict(n=2000, sigma0=15.0, sigma_s0=2.0, sigma_s=0.6, sigma_cap=5.0, temp=0.1, p_out=0.05, vmax=35.0, drift_frac=0.15, lost_s=100.0, r0=150.0, inject=0.05, inject_turn=0.3, jit_pos=4.0, jit_speed=0.2,
                 gap_ref=0.05, alpha_min=0.15, sigma_sift=30.0, p_sift=0.02, inject_sift=0.1, v0_scale=1.0, p0_err=0.0, gate=True, use_filter=True, ambig=False, ambig_weight=False)
 
 
@@ -120,16 +120,20 @@ def heading_vec(cap_deg):
     return np.stack([np.sin(r), -np.cos(r)], -1)
 
 
-def run_scenario(sim, grid, t0, horizon, P, rng, observe=None, record=0, sift=None):
+def run_scenario(sim, grid, t0, horizon, P, rng, observe=None, record=0, sift=None, init=None):
+    """init = (position, vitesse) : etat de depart impose (passe arriere du lissage) ; sinon derniers fixes GPS (verite a t0, seul usage autorise)."""
     S, centers, truth, ts, cap = sim["sims"], sim["centers"], sim["truth"], sim["ts"], sim["cap"]
     n = len(S)
     last = min(t0 + horizon, n - 1)
     k = 3
-    v0 = float(np.hypot(*(truth[t0] - truth[t0 - k])) / (ts[t0] - ts[t0 - k])) * P["v0_scale"]  # vitesse estimee sur les derniers fixes GPS (v0_scale : essai de robustesse)
-    p0 = truth[t0].copy()
-    if P["p0_err"] > 0:  # essai de robustesse : la derniere position connue est fausse (decalage dans une direction tiree au hasard)
-        ang = rng.uniform(0, 2 * np.pi)
-        p0 = p0 + P["p0_err"] * np.array([np.cos(ang), np.sin(ang)])
+    if init is not None:
+        p0, v0 = np.array(init[0], float), float(init[1])
+    else:
+        v0 = float(np.hypot(*(truth[t0] - truth[t0 - k])) / (ts[t0] - ts[t0 - k])) * P["v0_scale"]  # vitesse estimee sur les derniers fixes GPS (v0_scale : essai de robustesse)
+        p0 = truth[t0].copy()
+        if P["p0_err"] > 0:  # essai de robustesse : la derniere position connue est fausse (decalage dans une direction tiree au hasard)
+            ang = rng.uniform(0, 2 * np.pi)
+            p0 = p0 + P["p0_err"] * np.array([np.cos(ang), np.sin(ang)])
     N = P["n"]
     pos = p0 + rng.normal(0, P["sigma0"], (N, 2))
     spd = np.maximum(v0 + rng.normal(0, P["sigma_s0"], N), 1.0)
@@ -166,6 +170,8 @@ def run_scenario(sim, grid, t0, horizon, P, rng, observe=None, record=0, sift=No
         # temps depuis la derniere OBSERVATION utilisee (un trou de photos l'allonge) + une derive a l'aveugle qui grandit tant que l'estimation
         # n'a pas ete CONFIRMEE par une photo (accord estimation / reponse photo a moins de 250 m) : on ne se fie pas a une estimation non confirmee
         dmax = P["vmax"] * (ts[i] - last_obs_t) + 3.0 * prev_sp + 100.0 + P["drift_frac"] * P["vmax"] * (ts[i] - last_valid_t)
+        if ts[i] - last_valid_t > P["lost_s"]:
+            dmax = np.inf  # « perdu » : aucune confirmation depuis lost_s secondes, on rouvre la recherche (relocalisation)
         inj = [c for c in cands if np.hypot(*(c - prev_m)) <= dmax] if P["gate"] else cands
         # ambiguite : ecart de ressemblance entre la meilleure reponse et la 2e (a plus d'un diametre) ; faible = on ne sait pas laquelle est la bonne
         gap = float(s[top_idx[0]] - s[top_idx[1]]) if len(top_idx) > 1 else 1.0
@@ -236,6 +242,41 @@ def run_scenario(sim, grid, t0, horizon, P, rng, observe=None, record=0, sift=No
     err = lambda a: np.hypot(*(a - tr).T)
     return dict(frames=np.array(frames), est=est, top1=top1, dr=dr, spread=np.array(spread), e_est=err(est), e_top1=err(top1), e_dr=err(dr),
                 truth=tr, parts=parts, p0=p0, t0=t0, feat=np.array(feats))
+
+
+def smooth_scenario(sim, grid, t0, horizon, P, rng, sift=None, observe=None):
+    """Lissage : passe avant (comme en vol), puis passe ARRIERE depuis la derniere estimation (cap + 180, temps inverse, memes photos),
+    puis fusion par variance inverse. Hors ligne : sert a reconstruire la trajectoire APRES le vol (corriger le passe grace au futur)."""
+    fwd = run_scenario(sim, grid, t0, horizon, P, rng, observe, sift=sift)
+    fr = fwd["frames"]
+    idx = np.arange(t0, fr[-1] + 1)[::-1]
+    rev = dict(sim)
+    rev["sims"], rev["truth"], rev["ts"], rev["cap"] = sim["sims"][idx], sim["truth"][idx], -sim["ts"][idx], (sim["cap"][idx] + 180.0) % 360.0
+    sift_r = sift[idx] if sift is not None else None
+    obs_r = (lambda k: observe(int(idx[k]))) if observe is not None else None
+    # etat de depart arriere : derniere estimation et sa vitesse (3 dernieres estimations) ; aucune verite terrain
+    e = fwd["est"]
+    v_end = float(np.hypot(*(e[-1] - e[-4])) / max(sim["ts"][fr[-1]] - sim["ts"][fr[-4]], 1.0)) if len(e) >= 4 else 20.0
+    bwd = run_scenario(rev, grid, 0, len(idx) - 1, P, rng, obs_r, sift=sift_r, init=(e[-1], v_end))
+    pos_f = {int(f): (e[j], fwd["spread"][j]) for j, f in enumerate(fr)}
+    pos_b = {int(idx[f]): (bwd["est"][j], bwd["spread"][j]) for j, f in enumerate(bwd["frames"])}
+    out = []
+    for f in fr:
+        pf, sf = pos_f[int(f)]
+        if int(f) in pos_b:
+            pb, sb = pos_b[int(f)]
+            sf, sb = max(sf, 20.0), max(sb, 20.0)
+            if np.hypot(*(pf - pb)) > 3.0 * np.hypot(sf, sb):  # desaccord net : on garde la passe avant (celle reellement volee)
+                out.append(pf)
+            else:
+                wf, wb = 1 / sf ** 2, 1 / sb ** 2
+                out.append((wf * pf + wb * pb) / (wf + wb))
+        else:
+            out.append(pf)
+    out = np.array(out)
+    fwd["smooth"] = out
+    fwd["e_smooth"] = np.hypot(*(out - fwd["truth"]).T)
+    return fwd
 
 
 FEAT_NAMES = ["etalement_du_mode_m", "part_du_poids_dans_le_mode", "ess_normalise", "ressemblance_a_la_position_estimee", "distance_estimee_vs_reponse_photo_m",

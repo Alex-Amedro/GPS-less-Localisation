@@ -409,6 +409,75 @@ bruit de cap 5° / 10° / 20° : 90,0 / 89,5 / 86,4 % (1,4 % > 1 km à 20°) ; z
 GPS fausse de 100 / 300 / 1 000 m : 89,5 / 88,2 / 80,2 % (hybride 94,5 / 93,4 / 86,7 %). « Je ne sais pas » avec la version finale : répond à 78,1 % des photos du test, **97,9 % de bonnes** (contre 92,6 %), médiane 28 m (contre 33 m), AUROC 0,891.
 Vidéos `v7` et `v8` régénérées avec ce code (v7 : 51 m, 88,7 % ≤ 100 m ; v8 : 39 m, 94,0 % ≤ 100 m sur le tirage de la vidéo) ; GIF du README reconstruits à partir de v4 (avant), v7 (après), v8 (final).
 
+## Briques 1 à 5 de la demande du 2026-10-12 (aucun entraînement, charge faible) — `heading_calibration.py`, `final_eval.py`, `compare_video.py`
+Consigne : « experiments en gitignore » (déjà dans `.gitignore`, mais le fichier est **déjà suivi par git** : il faut `git rm --cached experiments.md` côté utilisateur, je ne touche pas à l'index) ; faire 1, 2, 3, 4 puis 5 = une vidéo comparative sur un autre vol, avec « les photos que voit le drone » ; aucun commit.
+**1. Correction du cap en vol (2026-10-12).** SIFT est exécuté sans vérification de rotation (`sift_eval.py --rot-tol 180 --out-name results_wide.csv` ; il exporte désormais `rot_deg`) : il répond à 37,0 % (vol 03) et 64,4 % (vol 04) des photos, 0,4 % / 0,8 % de réponses à plus de 100 m (contre 36,7 % / 64,0 % avec la vérification ± 20°).
+La rotation photo → carte mesurée par SIFT est le vrai cap ; biais estimé = médiane circulaire des 7 dernières réponses (écart au cap annoncé), causal, au moins 3 réponses ; cap corrigé = cap annoncé − biais ; descripteurs recalculés avec le cap corrigé ; réponses SIFT validées (± 20°) avec le cap corrigé.
+Résultats (3 tirages, 7 coupures × 150 ; ≤ 100 m ; sans correction → avec correction ; hybride) :
+
+| Biais ajouté | Validation vol 04 | Test vol 03 |
+|---|---|---|
+| 0° | 97,8 % → 97,1 % (biais estimé 2,5°) | 94,7 % → 94,9 % (biais estimé 7,9°) |
+| 10° | 93,2 % → 97,1 % | 84,8 % → 94,6 % |
+| 20° | 65,4 % → 97,1 % | 43,0 % → 94,0 % |
+| 30° | 24,8 % → 97,1 % | 20,3 % → 93,9 % |
+| 45° | 3,4 % → 97,0 % | 7,9 % → 93,9 % |
+
+Photo + cap sans SIFT : 45 m / 96,1 % (0°) et 44 m / 96,4 % (10 à 45°) sur la validation ; 63 m / 89 % sur le test. Le biais estimé à 0° (2,5° et 7,9°) montre que le champ `Phi1` a lui-même un décalage constant avec la rotation vue par SIFT (déjà observé : 2 à 8° au test rapide) ; la correction l'enlève aussi.
+Limite : il faut que SIFT réponde de temps en temps (37–64 % ici) ; la procédure est simulée hors ligne (deux passes) et n'est pas dans la chaîne par défaut.
+**3. Contrainte physique assouplie** (`lost_s` : plus de confirmation depuis N secondes → on rouvre la recherche) ; moyenne de 3 tirages, photo + cap :
+
+| Scénario | jamais | 150 s | **100 s (retenu)** | 60 s |
+|---|---|---|---|---|
+| Validation, aucun trou | 96,9 % / 0,00 % > 1 km | 96,9 / 0,00 | 96,9 / 0,00 | 96,7 / 0,19 |
+| Validation, GPS fausse de 1 km | 86,0 % / 5,1 % | 86,3 / 5,3 | 86,6 / 5,3 | 88,4 / 3,9 |
+| Test, GPS fausse de 1 km | 79,8 % / 6,4 % | 79,0 / 6,6 | 80,2 / 6,6 | 82,3 / 2,8 |
+| Test, 20 manquantes / 60 | 60,5 % / 1,05 % | 59,5 / 1,33 | 59,9 / 1,17 | 60,1 / 1,14 |
+
+60 s améliore le cas « GPS fausse » mais rouvre des erreurs > 1 km en vol normal sur la validation (0,19 % et 0,29 % sur le reste du vol) : **100 s retenu** (aucune régression, petit gain). `lost_s = 100` est le défaut de `particle_filter.py`.
+**2. Lissage arrière** (`smooth_scenario` : passe avant puis passe arrière depuis la dernière estimation, cap + 180°, temps inversé, fusion par variance inverse ; désaccord > 3σ : on garde la passe avant). Première règle « garder le plus certain » : validation moins bonne (0,19 % > 1 km, retours en arrière 5 → 16) → corrigée. Résultat final (hybride, 3 tirages) :
+
+| | Validation 04 | **Test 03** |
+|---|---|---|
+| Filtre en vol | 29 m / 36 m moy / 97,7 % ≤ 100 m / 5 retours en arrière sur 3 063 | 32 m / 42 m / 94,6 % / 6 sur 3 108 |
+| Après lissage | 28 m / 34 m / 98,2 % / 6 sur 3 063 | **21 m / 25 m / 99,3 % / 2 sur 3 108** |
+
+Hors ligne uniquement (utilise les photos suivantes).
+**4. Intervalles de confiance à 95 %** (bootstrap sur les coupures, 3 tirages, coupures toutes les 40 photos, 150 photos) :
+
+| Méthode | Test vol 03 (17 coupures) : médiane / ≤ 100 m / ≤ 500 m | Validation vol 04 (16 coupures) |
+|---|---|---|
+| À l'aveugle | 2 830 m [2 096 ; 3 679] / 3,9 % [3,2 ; 4,7] / 17,7 % | 1 396 m [963 ; 1 909] / 12,9 % / 32,0 % |
+| Une photo | 62 m [61 ; 64] / 74,4 % [72,0 ; 76,7] / 86,2 % [84,4 ; 88,0] | 74 m [70 ; 79] / 69,2 % [64,7 ; 73,7] / 87,0 % |
+| Filtre photo + cap | 58 m [55 ; 60] / 88,3 % [86,4 ; 90,4] / 100 % | 34 m [32 ; 36] / 96,2 % [95,3 ; 97,0] / 100 % |
+| Hybride SIFT | 35 m [32 ; 39] / 92,8 % [91,2 ; 94,4] / 100 % | 29 m [27 ; 31] / 97,6 % [96,5 ; 98,6] / 100 % |
+| Hybride + « je ne sais pas » (seuil 0,97) | répond à 78,4 % [60,4 ; 97,8] ; 97,8 % ≤ 100 m [97,2 ; 98,5] ; médiane 29 m [27 ; 30] | répond à 90,0 % [73,8 ; 99,3] ; 99,4 % ≤ 100 m [99,1 ; 99,6] ; 28 m |
+
+**5. Vidéo comparative sur le vol 04** (vol de validation, GPS coupé à la photo 50, 687 photos sans GPS) : `data/vis/comparatif_vol04.mp4` (54,5 Mo) et `docs/comparatif_vol04.gif` (7,2 Mo). Panneau gauche : carte suivie autour du vrai drone avec **le cadre de ce que voit la caméra** (blanc), la vraie trajectoire, l'estimation de l'hybride, les particules, les réponses de chaque méthode ;
+panneau droit : **la photo du drone**, la carte sous l'estimation et sous la réponse d'une seule photo (tournées comme la photo), l'état « I ANSWER / I DON'T KNOW », les erreurs en direct et le graphique d'erreur dans le temps. Résultats de ce tirage : une photo 73 m / 67,7 % ≤ 100 m ; filtre 34 m / 96,7 % ; hybride 29 m / 97,8 % ; à l'aveugle 7 796 m ; hybride + « je ne sais pas » : répond à 88,2 %, 99,5 % ≤ 100 m.
+README refait avec ces résultats (intervalles de confiance, auto-calibration du cap, lissage, 4 GIF dans `docs/`).
+**Retours de l'utilisateur sur la vidéo (2026-10-12)** : (a) « un chouïa trop rapide » → une image par photo, 10 images/s (69 s) ; (b) « la photo est bien, mais beaucoup de choses à voir et trop zoomé, mettre la map globale pour voir le déplacement, enlever les images les moins intéressantes » → refonte :
+colonne gauche = **carte du vol entier** (vraie trajectoire fine, trajectoire vraie et estimée progressives, dérive à l'aveugle, réponse d'une photo seule reliée par un trait quand elle se trompe de plus de 150 m, point de coupure du GPS), colonne centrale = photo, cartes sous l'estimation et sous la réponse d'une photo, état, erreurs, pourcentage dans les 100 m « jusqu'ici », graphique ;
+colonne droite = zoom moyen de 1,6 km (au lieu de 800 m) avec le cadre de la caméra et les particules, légende. Le filtre photo + cap (rouge) est retiré de la vidéo pour alléger. **Sélection des images** : gardées si la photo seule se trompe de plus de 150 m, si le système dit « je ne sais pas », si son erreur dépasse 100 m, autour des virages (−3 / +5 photos), plus une photo sur 6 :
+279 images sur 687 photos (41 %, dont 204 « intéressantes »), 8 images/s = 35 s ; `--all` pour tout garder. Fichiers : `data/vis/comparatif_vol04.mp4`, `docs/comparatif_vol04.gif` (75 images × 140 ms).
+
+**Nouveau retour (2026-10-12)** : « plus lent et plus smooth, ça fait trop mal au crâne, quitte à ne pas tout faire dans le vol, enlever les trucs inutiles ou les mettre dans un autre gif ». Cause : les coupures entre images non contiguës (sélection « intéressantes ») + beaucoup d'éléments qui clignotent (graphique, légende, 2 cartes + zoom). Refonte de `compare_video.py` :
+- **un seul épisode continu** : photos 70 à 220 (150 photos consécutives, pas de saut), au lieu de 41 % des images dispersées sur tout le vol ; `--start`, `--count` ;
+- **interpolation** : 10 images de vidéo entre deux photos (`--sub`) : les points (vérité, estimation, aveugle) glissent, le cap du cadre de la caméra tourne en douceur, la photo et les deux disques de carte sont en **fondu enchaîné** sur la seconde moitié de chaque intervalle ; 20 images/s → 1 500 images = 75 s (au lieu de 35 s pour 279 photos) ;
+- **allégé** : le graphique d'erreur et les particules du panneau central sont retirés de la vidéo principale. Restent la carte du vol entier (gauche), la photo + les deux cartes + l'état + 3 erreurs (centre), le zoom 1,6 km avec le cadre caméra (droite) ;
+- **second GIF** `docs/analyse_vol04.gif` : le graphique d'erreur (échelle log, moyenne glissante sur 5 photos, zones « je ne sais pas » ombrées) sur **tout** le vol, qui se dessine doucement, avec les pourcentages ≤ 100 m cumulés.
+Chiffres du tirage (graine 0, vol complet, 687 photos) : système 29 m, 97,5 % ≤ 100 m ; une photo 73 m, 67,7 % ; à l'aveugle 7 796 m ; répond à 88,4 % des photos, 99,3 % de celles-ci ≤ 100 m. Fichiers : `data/vis/comparatif_vol04.mp4` (57 Mo, 150 photos, 75 s) ; `docs/comparatif_vol04.gif` (8,5 Mo : 100 photos, 400 images interpolées, une sur deux gardée, 80 ms, largeur 520 px, 16 s) ; `docs/analyse_vol04.gif` (0,5 Mo).
+
+**Encore un retour (2026-10-12)** : « c'est beaucoup mieux, mais la qualité du GIF est telle qu'on comprend les images et quelques métriques, mais la plupart sont illisibles ; j'aurais utilisé plus de place, agrandi ou séparé en deux GIF côte à côte ». Cause : une seule image de 1290×800 réduite à 520 px de large (GIF) → textes de ~5 px de haut. Nouvelle version de `compare_video.py` :
+- **deux vues séparées**, chacune avec de gros textes (0,55 à 0,85) et des traits épais, à regarder côte à côte : `*_camera` (540×776 : photo avec le temps depuis la coupure, « I ANSWER / I DON'T KNOW », 3 erreurs, deux disques de 262 px) et `*_carte` (686×776 : carte du vol entier de 730 px de haut avec dérive à l'aveugle et ~50 dernières photos de vrai chemin / estimation, zoom 1,6 km de 380 px avec cadre caméra et particules, légende) ;
+- plus de réduction de taille : les GIF gardent la résolution native des vues ;
+- **épisode** : photos 345 à 375 (30 photos consécutives, 2,5 min de vol, un demi-tour à la photo 359, une photo seule fausse de 2 606 m, deux « je ne sais pas ») ; vidéos mp4 locales de 100 photos (340 à 440, 20 images/s, 50 s) ;
+- **GIF plus légers sans perte** : palette commune de 48 couleurs avec les couleurs de la légende imposées (sinon le cyan devenait vert et le jaune orange) ; seuls les pixels qui changent sont codés (index transparent, `disposal=1`) : la carte statique de gauche n'est plus réencodée à chaque image (17,4 → 9,8 Mo) ; fondu enchaîné de la photo réduit à 1 image sur 4 ; interpolation 4 images par photo à 120 ms = 2 photos/s, comme la vidéo ;
+- contour du texte : 8 décalages de même épaisseur (corrige les petits blocs noirs en bout de texte).
+Fichiers : `docs/comparatif_vol04_camera.gif` (7,0 Mo), `docs/comparatif_vol04_carte.gif` (9,8 Mo), `docs/analyse_vol04.gif` (1,2 Mo, graphique agrandi), `data/vis/comparatif_vol04_camera.mp4` (15 Mo) et `_carte.mp4` (29 Mo). L'ancien `docs/comparatif_vol04.gif` et `data/vis/comparatif_vol04.mp4` (une seule vue, trop petite) sont supprimés. Chiffres du tirage inchangés (graine 0, vol complet de 687 photos : système 29 m / 97,5 % ≤ 100 m ; une photo 73 m / 67,7 % ; répond à 88,4 %, 99,3 % de ces réponses ≤ 100 m). Vérification : lecture du GIF (49 images distinctes après fusion des identiques) et contrôle visuel de 3 images.
+
+**Correction suite au retour « la ligne derrière le drone doit être complète, celle en violet »** : les traces du vrai chemin et de l'estimation sur la carte du vol entier ne montraient que les 50 dernières photos (et la dérive à l'aveugle orange partait de la 51e photo après la coupure : indice faux, `dr[a.cut:]` au lieu de `dr[:k+1]`, les tableaux sont indexés depuis la coupure). Maintenant les trois traces (vrai chemin vert, estimation magenta, aveugle orange) partent de la coupure du GPS et vont jusqu'au drone ; le zoom montre aussi la trace magenta de l'estimation en plus de la verte (les 30 derniers points, la fenêtre ne montre que le bout). Vidéos et GIF re-générés : `docs/comparatif_vol04_camera.gif` 7,4 Mo, `docs/comparatif_vol04_carte.gif` 10,2 Mo.
+
 ## Nouvelle ville (taille similaire à Belfort) — en cours
 Enquête sur 94 départements (édition RVB 20 cm la plus proche de 2020 ; relevé partiel du catalogue, script supprimé). Taille de téléchargement mesurée :
 Paris D075 1,23 Go · Hauts-de-Seine D092 1,79 · Seine-Saint-Denis D093 1,89 · Val-de-Marne D094 2,17 · **Belfort D090 4,07** · **Val-d'Oise D095 7,42** · Essonne D091 9,39 · Yvelines D078 13,1 ;

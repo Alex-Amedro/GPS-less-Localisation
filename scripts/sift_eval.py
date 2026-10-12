@@ -92,7 +92,7 @@ def locate(q_gray, cap, exp_scale, sift, matcher, mpts, grid):
         if not (exp_scale / SCALE_TOL <= s <= exp_scale * SCALE_TOL) or angle_diff(rot, cap) > ROT_TOL:
             continue
         ctr = M @ np.array([w / 2, h / 2, 1.0])
-        out.append((int(inl.sum()), int(votes), float(ctr[0] * GSD), float(ctr[1] * GSD)))
+        out.append((int(inl.sum()), int(votes), float(ctr[0] * GSD), float(ctr[1] * GSD), rot))
     out.sort(key=lambda r: (-r[0], -r[1]))
     return out, len(qi)
 
@@ -103,9 +103,12 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="n'evaluer que les N premieres requetes (mesure du temps)")
     ap.add_argument("--vis", type=Path, default=Path("data/vis"))
     ap.add_argument("--images", action="store_true", help="ecrire une image de reussite et une d'echec (par defaut : aucune image)")
+    ap.add_argument("--rot-tol", type=float, default=20.0, help="tolerance de rotation autour du cap (deg) ; 180 = pas de verification de la rotation (sert a ESTIMER un biais de cap)")
+    ap.add_argument("--out-name", default="results.csv")
     a = ap.parse_args()
 
-    global GSD, CELL
+    global GSD, CELL, ROT_TOL
+    ROT_TOL = a.rot_tol
     GSD = float(json.load(open(a.test / "meta.json"))["gsd"])
     CELL = int(round(CELL_M / GSD))  # cellule de 128 m quelle que soit l'echelle
     img = np.load(a.test / "map.npy")
@@ -135,11 +138,12 @@ def main():
         tx, ty = float(r["x_m"]), float(r["y_m"])
         d = [float(np.hypot(c[2] - tx, c[3] - ty)) for c in cand[:5]]
         res.append(dict(file=r["file"], n_good=ngood, n_valid=len(cand), inliers=cand[0][0] if cand else 0, err_top1=d[0] if d else np.inf,
-                        err_best5=min(d) if d else np.inf, time_s=dt, pred_x=cand[0][2] if cand else np.nan, pred_y=cand[0][3] if cand else np.nan))
+                        err_best5=min(d) if d else np.inf, time_s=dt, pred_x=cand[0][2] if cand else np.nan, pred_y=cand[0][3] if cand else np.nan,
+                        rot_deg=cand[0][4] if cand else np.nan))
         if (k + 1) % 20 == 0:
             print(f"  {k + 1}/{len(truth)} photos, {np.mean([x['time_s'] for x in res]):.2f} s/photo", flush=True)
 
-    with open(a.test / ("results_limit.csv" if a.limit else "results.csv"), "w", newline="") as f:
+    with open(a.test / ("results_limit.csv" if a.limit else a.out_name), "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=res[0].keys())
         w.writeheader(); w.writerows(res)
 
