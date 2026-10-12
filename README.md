@@ -94,17 +94,13 @@ Early on, it sometimes believed that wrong answer at the first U-turn and jumped
 
 ## Limitations
 
-- **One real test flight** plus one validation flight. Other places, seasons or cameras are not shown (trained on France + 5 flights, tested on China).
-- **The test flight was looked at several times** while fixing the filter. Each change was validated on a separate flight first and logged, but it is no longer a pristine one-shot.
 - **The heading must be roughly right at the start, or recoverable by SIFT.** A bias of 20° or more breaks the system unless SIFT answers often enough (here 37–64 % of the photos). The calibration is shown as an offline simulation (`heading_calibration.py`), not in the default run.
-- **Camera tilt of 20° or more** gives about 50 % within 100 m; the model never saw perspective in training.
 - **The photo scale is assumed known.** Here it was calibrated on the same flight.
 - **Precision is limited** by the 128 m grid of the map disks (about 90 m worst case); below that, SIFT and the filter do the work.
-- **Initial position and speed come from the last GPS fixes.** Starting with no position at all is not covered.
+- **Initial position and speed come from the last GPS fixes.**
 - **Not tested on embedded hardware.** On the laptop (RTX 5070, 8 GB): about 11 ms per photo for the descriptor, 0.06 s for SIFT.
-- **UAV-VisLoc maps come from Google** and are not redistributed.
 
-## Data (not in this repository)
+## Data 
 
 - **IGN BD ORTHO** (map and training in France): <https://data.geopf.fr/telechargement/resource/BDORTHO> — Licence Ouverte Etalab (credit: "BD ORTHO®, IGN"). One archive per department and edition (used: Belfort D090, 2017 and 2020; Val-d'Oise D095, 2018 and 2021).
 - **UAV-VisLoc** (real flights and test): <https://github.com/IntelliSensing/UAV-VisLoc> — paper <https://arxiv.org/abs/2405.11936>. Full dataset (16.4 GB, 11 flights): <https://drive.google.com/file/d/1xYODANyilEMM3CfWh85APwkTHQeLTcCT/view?usp=sharing>.

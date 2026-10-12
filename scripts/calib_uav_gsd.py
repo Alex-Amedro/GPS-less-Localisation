@@ -32,6 +32,7 @@ def main():
     ap.add_argument("--root", type=Path, default=Path("data/raw/uavvisloc"))
     ap.add_argument("--vols", nargs="+", required=True)
     ap.add_argument("--n", type=int, default=12)
+    ap.add_argument("--mults", type=float, nargs="+", default=list(MULTS), help="facteurs d'echelle essayes autour de l'essai de depart")
     a = ap.parse_args()
 
     sift = cv2.SIFT_create()
@@ -62,7 +63,7 @@ def main():
             photo = cv2.cvtColor(cv2.imread(str(a.root / vol / "drone" / r["filename"])), cv2.COLOR_BGR2GRAY)
             kp2, d2 = sift.detectAndCompute(mg, None)
             best = None
-            for m in MULTS:
+            for m in a.mults:
                 g = guess * m
                 f = g / MAP_GSD
                 small = cv2.resize(photo, None, fx=f, fy=f, interpolation=cv2.INTER_AREA)
